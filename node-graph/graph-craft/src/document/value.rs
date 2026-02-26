@@ -26,6 +26,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::str::FromStr;
 pub use std::sync::Arc;
+use text_nodes::vector_types::GradientStop;
 
 pub struct TaggedValueTypeError;
 
@@ -182,7 +183,6 @@ tagged_value! {
 	U64(u64),
 	Bool(bool),
 	String(String),
-	ColorNotInTable(Color),
 	// ========================
 	// LISTS OF PRIMITIVE TYPES
 	// ========================
@@ -209,8 +209,10 @@ tagged_value! {
 	#[serde(alias = "ArtboardGroup")]
 	Artboard(Table<Artboard>),
 	#[serde(deserialize_with = "core_types::misc::migrate_color")] // TODO: Eventually remove this migration document upgrade code
-	#[serde(alias = "ColorTable", alias = "OptionalColor")]
+	#[serde(alias = "ColorTable", alias = "OptionalColor", alias = "ColorNotInTable")]
 	Color(Table<Color>),
+	#[serde(deserialize_with = "graphic_types::vector_types::gradient::migrate_gradient_stops")] // TODO: Eventually remove this migration document upgrade code
+	#[serde(alias = "GradientPositions", alias = "GradientStops")]
 	GradientTable(Table<GradientStops>),
 	// ============
 	// STRUCT TYPES
@@ -222,8 +224,6 @@ tagged_value! {
 	DAffine2(DAffine2),
 	Stroke(graphic_types::vector_types::vector::style::Stroke),
 	Gradient(graphic_types::vector_types::vector::style::Gradient),
-	#[serde(alias = "GradientPositions")] // TODO: Eventually remove this alias document upgrade code
-	GradientStops(GradientStops),
 	Font(text_nodes::Font),
 	BrushStrokes(Vec<BrushStroke>),
 	BrushCache(BrushCache),
@@ -333,6 +333,35 @@ impl TaggedValue {
 			None
 		}
 
+		fn to_gradient(input: &str) -> Option<GradientStops> {
+			// String syntax: (e.g. "000000ff, ff0000ff")
+			let stops = input.split(',').filter_map(|s| to_color(s.trim())).collect::<Vec<_>>();
+			if stops.len() == 1 {
+				Some(GradientStops::new(vec![
+					GradientStop {
+						position: 0.,
+						midpoint: 0.5,
+						color: stops[0],
+					},
+					GradientStop {
+						position: 1.,
+						midpoint: 0.5,
+						color: stops[0],
+					},
+				]))
+			} else if stops.len() >= 2 {
+				let step = 1. / (stops.len() - 1) as f64;
+				Some(GradientStops::new(stops.into_iter().enumerate().map(|(i, color)| GradientStop {
+					position: i as f64 * step,
+					midpoint: 0.5,
+					color,
+				})))
+			} else {
+				log::error!("Invalid default value gradient string: {input}");
+				None
+			}
+		}
+
 		fn to_reference_point(input: &str) -> Option<ReferencePoint> {
 			let mut choices = input.split("::");
 			let (first, second) = (choices.next()?.trim(), choices.next()?.trim());
@@ -375,9 +404,8 @@ impl TaggedValue {
 					() if ty == TypeId::of::<u32>() => FromStr::from_str(string).map(TaggedValue::U32).ok()?,
 					() if ty == TypeId::of::<DVec2>() => to_dvec2(string).map(TaggedValue::DVec2)?,
 					() if ty == TypeId::of::<bool>() => FromStr::from_str(string).map(TaggedValue::Bool).ok()?,
-					() if ty == TypeId::of::<Color>() => to_color(string).map(TaggedValue::ColorNotInTable)?,
-					() if ty == TypeId::of::<Option<Color>>() => TaggedValue::ColorNotInTable(to_color(string)?),
 					() if ty == TypeId::of::<Table<Color>>() => to_color(string).map(|color| TaggedValue::Color(Table::new_from_element(color)))?,
+					() if ty == TypeId::of::<Table<GradientStops>>() => to_gradient(string).map(|color| TaggedValue::GradientTable(Table::new_from_element(color)))?,
 					() if ty == TypeId::of::<Fill>() => to_color(string).map(|color| TaggedValue::Fill(Fill::solid(color)))?,
 					() if ty == TypeId::of::<ReferencePoint>() => to_reference_point(string).map(TaggedValue::ReferencePoint)?,
 					_ => return None,
@@ -536,9 +564,4 @@ mod fake_hash {
 			self.1.hash(state)
 		}
 	}
-}
-
-#[test]
-fn can_construct_color() {
-	assert_eq!(TaggedValue::from_type(&concrete!(Color)).unwrap(), TaggedValue::ColorNotInTable(Color::default()));
 }
