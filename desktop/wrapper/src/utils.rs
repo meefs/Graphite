@@ -88,8 +88,8 @@ pub(crate) mod menu {
 			_ => None,
 		};
 
-		match icon.as_str() {
-			"CheckboxChecked" => {
+		match icon.as_deref() {
+			Some("CheckboxChecked") => {
 				return MenuItem::Checkbox {
 					id,
 					text,
@@ -98,7 +98,7 @@ pub(crate) mod menu {
 					checked: true,
 				};
 			}
-			"CheckboxUnchecked" => {
+			Some("CheckboxUnchecked") => {
 				return MenuItem::Checkbox {
 					id,
 					text,
